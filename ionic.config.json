@@ -1,0 +1,7 @@
+{
+  "name": "WifiAnalyzer",
+  "integrations": {
+    "capacitor": {}
+  },
+  "type": "angular"
+}
