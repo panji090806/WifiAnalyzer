@@ -1,4 +1,6 @@
 import { Component } from '@angular/core';
+import { App } from '@capacitor/app'; // Pastikan plugin ini terinstall
+import { AlertController, Platform } from '@ionic/angular';
 
 @Component({
   selector: 'app-root',
@@ -7,5 +9,35 @@ import { Component } from '@angular/core';
   standalone: false,
 })
 export class AppComponent {
-  constructor() {}
+  constructor(
+    private platform: Platform,
+    private alertController: AlertController
+  ) {
+    this.initializeApp();
+  }
+
+  initializeApp() {
+    this.platform.ready().then(() => {
+      // Menangani tombol back fisik di Android
+      App.addListener('backButton', async () => {
+        const alert = await this.alertController.create({
+          header: 'Konfirmasi',
+          message: 'Apakah Anda ingin keluar dari WifiAnalyzer?',
+          buttons: [
+            {
+              text: 'Tidak',
+              role: 'cancel'
+            },
+            {
+              text: 'Ya',
+              handler: () => {
+                App.exitApp(); // Keluar dari aplikasi
+              }
+            }
+          ]
+        });
+        await alert.present();
+      });
+    });
+  }
 }

@@ -1,9 +1,13 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'io.ionic.starter',
+  appId: 'com.ji.wifianalyzer',
   appName: 'WifiAnalyzer',
-  webDir: 'www'
+  webDir: 'www',
+  server: {
+    androidScheme: 'https',
+    allowNavigation: ['dartd.my.id']
+  }
 };
 
 export default config;

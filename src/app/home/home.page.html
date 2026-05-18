@@ -1,20 +1,114 @@
 <ion-header [translucent]="true">
-  <ion-toolbar>
-    <ion-title>
-      Blank
-    </ion-title>
+  <ion-toolbar color="primary">
+    <ion-title>Analyzer WiFi</ion-title>
+    <ion-buttons slot="end">
+      <ion-button (click)="startScan()" [disabled]="isScanning">
+        <ion-icon *ngIf="!isScanning" name="refresh-outline" slot="icon-only"></ion-icon>
+        <ion-spinner *ngIf="isScanning" name="crescent"></ion-spinner>
+      </ion-button>
+    </ion-buttons>
   </ion-toolbar>
 </ion-header>
 
-<ion-content [fullscreen]="true">
-  <ion-header collapse="condense">
-    <ion-toolbar>
-      <ion-title size="large">Blank</ion-title>
-    </ion-toolbar>
-  </ion-header>
-
-  <div id="container">
-    <strong>Ready to create an app?</strong>
-    <p>Start with Ionic <a target="_blank" rel="noopener noreferrer" href="https://ionicframework.com/docs/components">UI Components</a></p>
+<ion-content>
+  <div *ngIf="errorMessage" class="ion-padding">
+    <ion-badge [color]="errorMessage.includes('BERHASIL') ? 'success' : 'warning'" style="width: 100%; padding: 10px;">
+      {{ errorMessage }}
+    </ion-badge>
   </div>
+
+  <ion-grid>
+    <ion-row>
+      <ion-col size="4">
+        <div class="stat-box safe">
+          <ion-icon name="shield-checkmark"></ion-icon>
+          <div class="count">{{ securityStats.safe }}</div>
+          <div class="label">Aman</div>
+        </div>
+      </ion-col>
+      <ion-col size="4">
+        <div class="stat-box warning">
+          <ion-icon name="shield-half"></ion-icon>
+          <div class="count">{{ securityStats.warning }}</div>
+          <div class="label">Waspada</div>
+        </div>
+      </ion-col>
+      <ion-col size="4">
+        <div class="stat-box danger">
+          <ion-icon name="shield-alert"></ion-icon>
+          <div class="count">{{ securityStats.danger }}</div>
+          <div class="label">Bahaya</div>
+        </div>
+      </ion-col>
+    </ion-row>
+  </ion-grid>
+
+  <ion-card *ngIf="networks && networks.length > 0">
+    <ion-card-header>
+      <ion-card-subtitle>Sinyal Terkuat (dBm Meter)</ion-card-subtitle>
+      <ion-card-title>{{ networks[0].level }} dBm</ion-card-title>
+    </ion-card-header>
+    <ion-card-content>
+      <ion-progress-bar [value]="(networks[0].level + 100) / 70" color="success"></ion-progress-bar>
+    </ion-card-content>
+  </ion-card>
+
+  <ion-card>
+    <ion-card-header>
+      <ion-card-title>Signal Time-Graph</ion-card-title>
+    </ion-card-header>
+    <ion-card-content>
+      <canvas #lineCanvas class="line-canvas"></canvas>
+    </ion-card-content>
+  </ion-card>
+
+  <ion-card>
+    <ion-card-header>
+      <ion-card-title>Visualisasi Saluran</ion-card-title>
+    </ion-card-header>
+    <ion-card-content>
+      <canvas #barCanvas></canvas>
+    </ion-card-content>
+  </ion-card>
+
+  <div class="ion-text-center ion-padding">
+    <ion-icon name="radio-outline" 
+              class="radar-icon"
+              [color]="getTrackerColor(networks[0]?.level)" 
+              style="font-size: 80px;"></ion-icon>
+    <p style="font-weight: bold;">Status: {{ getSignalStatus() }}</p>
+    <p *ngIf="isScanning" style="color: var(--ion-color-primary);">Sedang mencari sinyal...</p>
+  </div>
+
+  <ion-list-header>
+    <ion-label color="primary" style="font-weight: bold;">
+      Ditemukan {{ totalWifi }} Access Point
+    </ion-label>
+  </ion-list-header>
+
+  <ion-list lines="full">
+    <ng-container *ngIf="networks && networks.length > 0; else noData">
+      <ion-item *ngFor="let wifi of networks">
+        <ion-icon name="wifi" slot="start" [color]="getTrackerColor(wifi.level)"></ion-icon>
+        <ion-label>
+          <h2 style="font-weight: bold;">{{ wifi.ssid || wifi.SSID || 'Hidden Network' }}</h2>
+          <p>BSSID: {{ wifi.bssid || '-' }} | Channel: {{ getChannelFromFreq(wifi.frequency) }}</p>
+          <p [style.color]="(wifi.capabilities || '').includes('OPEN') ? 'red' : 'green'">
+            Keamanan: {{ wifi.capabilities || wifi.security || 'Unknown' }}
+          </p>
+        </ion-label>
+        <ion-badge slot="end" [color]="getTrackerColor(wifi.level)">
+          {{ wifi.level }} dBm
+        </ion-badge>
+      </ion-item>
+    </ng-container>
+
+    <ng-template #noData>
+      <ion-item lines="none">
+        <ion-label class="ion-text-center">
+          <p>Belum ada data. Silakan ketuk tombol ikon refresh di atas.</p>
+        </ion-label>
+      </ion-item>
+    </ng-template>
+  </ion-list>
 </ion-content>

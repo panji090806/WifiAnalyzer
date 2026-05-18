@@ -11,6 +11,22 @@ const routes: Routes = [
     redirectTo: 'home',
     pathMatch: 'full'
   },
+  {
+    path: 'monitor',
+    loadChildren: () => import('./monitor/monitor.module').then( m => m.MonitorPageModule)
+  },
+  {
+    path: 'channels',
+    loadChildren: () => import('./channels/channels.module').then( m => m.ChannelsPageModule)
+  },
+  {
+    path: 'scanner',
+    loadChildren: () => import('./scanner/scanner.module').then( m => m.ScannerPageModule)
+  },
+  {
+    path: 'tracker',
+    loadChildren: () => import('./tracker/tracker.module').then( m => m.TrackerPageModule)
+  },
 ];
 
 @NgModule({
