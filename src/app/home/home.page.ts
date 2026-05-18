@@ -37,10 +37,8 @@ export class HomePage implements OnInit, AfterViewInit, OnDestroy {
   private sqlite: SQLiteConnection = new SQLiteConnection(CapacitorSQLite);
   private db!: SQLiteDBConnection;
 
-  constructor(private alertController: AlertController) {
-    // Inisialisasi Database Lokal saat aplikasi pertama kali dijalankan
-    this.initDatabase();
-  }
+  // Constructor dibiarkan bersih tanpa initDatabase
+  constructor(private alertController: AlertController) { }
 
   // --- LOGIKA DATABASE LOKAL (SQLITE) ---
 
@@ -50,7 +48,7 @@ export class HomePage implements OnInit, AfterViewInit, OnDestroy {
       this.db = await this.sqlite.createConnection('wifi_db', false, 'no-encryption', 1, false);
       await this.db.open();
       
-      // Membuat tabel jika belum ada (Tanpa perlu cPanel/MySQL)
+      // Membuat tabel jika belum ada
       const schema = `CREATE TABLE IF NOT EXISTS wifi_data (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         ssid TEXT,
@@ -83,7 +81,10 @@ export class HomePage implements OnInit, AfterViewInit, OnDestroy {
 
   // --- LOGIKA SIKLUS HIDUP APLIKASI ---
 
-  ngOnInit() {
+  async ngOnInit() {
+    // Jalankan initDatabase di sini agar platform benar-benar siap
+    await this.initDatabase();
+    
     this.checkPermissions();
     this.networks = [];
     
@@ -113,7 +114,7 @@ export class HomePage implements OnInit, AfterViewInit, OnDestroy {
 
   async startScan() {
     console.log('--- MEMULAI SCAN WIFI ---');
-    if (this.isScanning) return;
+    if (this.isScanning) return; // Mencegah scan ganda jika tombol diklik cepat
 
     this.isScanning = true;
     this.errorMessage = 'Memindai jaringan...';
@@ -156,7 +157,7 @@ export class HomePage implements OnInit, AfterViewInit, OnDestroy {
     }
   }
 
-  // --- LOGIKA IZIN & GRAFIK (TETAP SAMA) ---
+  // --- LOGIKA IZIN & GRAFIK ---
 
   async checkPermissions() {
     try {
@@ -263,7 +264,7 @@ export class HomePage implements OnInit, AfterViewInit, OnDestroy {
     if (level > -70) return 'Sinyal Cukup 📍';
     return 'Sinyal Lemah ❌';
   }
-  // Tambahkan fungsi ini di bagian bawah file home.page.ts
+
   getChannelFromFreq(freq: number): number {
     if (freq >= 2412 && freq <= 2484) {
       return (freq - 2407) / 5;
