@@ -92,34 +92,44 @@ export class HomePage implements OnInit, AfterViewInit, OnDestroy {
 
   // --- LOGIKA SIKLUS HIDUP ---
 
-  async ngOnInit() {
-    // Delay 500ms agar plugin siap di HP
-    setTimeout(async () => {
-      await this.initDatabase();
-    }, 500);
+async ngOnInit() {
+  try {
+    // 1. Tunggu database selesai diinisialisasi sampai tuntas
+    await this.initDatabase();
+    this.isDbReady = true;
+    console.log('Database SQLite berhasil diaktifkan.');
     
-    this.checkPermissions();
-    this.networks = [];
-    
-    this.updateInterval = setInterval(() => {
-      if (!this.isScanning) {
-        this.updateChannelData();
-        this.updateSecurityStats(); 
-      }
-      this.updateLiveGraph();
-    }, 3000);
+    //mengambil data lama dari database saat pertama buka
+
+  } catch (error) {
+    console.error('Database gagal dimuat di awal:', error);
+    this.isDbReady = false;
   }
 
-  ngAfterViewInit() {
-    this.createLineChart();
-    this.createBarChart();
-  }
+  // 2. Jalankan pengecekan izin lokasi/wifi setelah database siap
+  this.checkPermissions();
+  this.networks = [];
+  
+  // 3. Jalankan interval update UI secara berkala
+  this.updateInterval = setInterval(() => {
+    if (!this.isScanning) {
+      this.updateChannelData();
+      this.updateSecurityStats(); 
+    }
+    this.updateLiveGraph();
+  }, 3000);
+}
 
-  ngOnDestroy() {
-    if (this.updateInterval) clearInterval(this.updateInterval);
-    // Tutup koneksi agar tidak leak
-    this.sqlite.closeConnection('wifi_db', false);
-  }
+ngAfterViewInit() {
+  this.createLineChart();
+  this.createBarChart();
+}
+
+ngOnDestroy() {
+  if (this.updateInterval) clearInterval(this.updateInterval);
+  // Tutup koneksi agar tidak leak
+  this.sqlite.closeConnection('wifi_db', false);
+}
 
   // --- LOGIKA SCAN WIFI & GRAFIK (Tetap Sama dengan Kode Kamu) ---
 
