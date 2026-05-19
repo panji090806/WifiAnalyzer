@@ -36,19 +36,27 @@ export class HomePage implements OnInit, AfterViewInit, OnDestroy {
   // Variabel Database Lokal
   private sqlite: SQLiteConnection = new SQLiteConnection(CapacitorSQLite);
   private db!: SQLiteDBConnection;
+  private isDbReady = false; 
 
-  // Constructor dibiarkan bersih tanpa initDatabase
   constructor(private alertController: AlertController) { }
 
   // --- LOGIKA DATABASE LOKAL (SQLITE) ---
 
   async initDatabase() {
     try {
-      // Membuat koneksi ke database bernama 'wifi_db'
-      this.db = await this.sqlite.createConnection('wifi_db', false, 'no-encryption', 1, false);
+      // Perbaikan: Cek konsistensi agar tidak error "Connection already exists"
+      const cc = await this.sqlite.checkConnectionsConsistency();
+      const isConn = (await this.sqlite.isConnection('wifi_db', false)).result;
+      
+      if (cc.result && isConn) {
+        // Gunakan retrieveConnection (tanpa akhiran DB) untuk versi terbaru
+        this.db = await this.sqlite.retrieveConnection('wifi_db', false);
+      } else {
+        this.db = await this.sqlite.createConnection('wifi_db', false, 'no-encryption', 1, false);
+      }
+
       await this.db.open();
       
-      // Membuat tabel jika belum ada
       const schema = `CREATE TABLE IF NOT EXISTS wifi_data (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         ssid TEXT,
@@ -57,38 +65,42 @@ export class HomePage implements OnInit, AfterViewInit, OnDestroy {
         waktu TEXT
       );`;
       await this.db.execute(schema);
-      console.log('SQLITE READY: Database Lokal berhasil disiapkan.');
+      
+      this.isDbReady = true;
+      this.errorMessage = 'Database Siap.';
     } catch (e) {
-      console.error('SQLITE ERROR: Gagal menyiapkan database', e);
+      console.error('SQLITE ERROR:', e);
+      this.isDbReady = false;
       this.errorMessage = 'Gagal memuat Database Lokal.';
     }
   }
 
   async saveToLocalDB(payload: any) {
+    if (!this.isDbReady) await this.initDatabase();
     try {
-      // Simpan setiap hasil scan ke dalam tabel lokal di HP
-      for (const wifi of payload.daftarWifi) {
-        const query = `INSERT INTO wifi_data (ssid, level, capabilities, waktu) VALUES (?, ?, ?, ?)`;
-        await this.db.run(query, [wifi.ssid, wifi.level, wifi.capabilities, payload.waktu]);
+      if (this.isDbReady) {
+        for (const wifi of payload.daftarWifi) {
+          const query = `INSERT INTO wifi_data (ssid, level, capabilities, waktu) VALUES (?, ?, ?, ?)`;
+          await this.db.run(query, [wifi.ssid, wifi.level, wifi.capabilities, payload.waktu]);
+        }
+        this.errorMessage = "BERHASIL: " + payload.daftarWifi.length + " data tersimpan.";
       }
-      this.errorMessage = "BERHASIL: " + payload.daftarWifi.length + " data tersimpan di HP.";
-      console.log('SQLITE SUCCESS: Data wifi berhasil disimpan ke HP.');
     } catch (e) {
-      console.error('SQLITE SAVE ERROR:', e);
-      this.errorMessage = 'Gagal menyimpan ke Database Lokal.';
+      this.errorMessage = 'Gagal menyimpan ke Database.';
     }
   }
 
-  // --- LOGIKA SIKLUS HIDUP APLIKASI ---
+  // --- LOGIKA SIKLUS HIDUP ---
 
   async ngOnInit() {
-    // Jalankan initDatabase di sini agar platform benar-benar siap
-    await this.initDatabase();
+    // Delay 500ms agar plugin siap di HP
+    setTimeout(async () => {
+      await this.initDatabase();
+    }, 500);
     
     this.checkPermissions();
     this.networks = [];
     
-    // Update grafik setiap 3 detik
     this.updateInterval = setInterval(() => {
       if (!this.isScanning) {
         this.updateChannelData();
@@ -101,26 +113,22 @@ export class HomePage implements OnInit, AfterViewInit, OnDestroy {
   ngAfterViewInit() {
     this.createLineChart();
     this.createBarChart();
-    this.checkPermissions();
   }
 
   ngOnDestroy() {
-    if (this.updateInterval) {
-      clearInterval(this.updateInterval);
-    }
+    if (this.updateInterval) clearInterval(this.updateInterval);
+    // Tutup koneksi agar tidak leak
+    this.sqlite.closeConnection('wifi_db', false);
   }
 
-  // --- LOGIKA SCAN WIFI ---
+  // --- LOGIKA SCAN WIFI & GRAFIK (Tetap Sama dengan Kode Kamu) ---
 
   async startScan() {
-    console.log('--- MEMULAI SCAN WIFI ---');
-    if (this.isScanning) return; // Mencegah scan ganda jika tombol diklik cepat
-
+    if (this.isScanning) return; 
     this.isScanning = true;
     this.errorMessage = 'Memindai jaringan...';
 
     try {
-      await this.checkPermissions();
       const result = await CapacitorWifi.getScanResults();
       const scanData = (result as any)?.networks || (result as any)?.scan || [];
 
@@ -133,7 +141,6 @@ export class HomePage implements OnInit, AfterViewInit, OnDestroy {
         this.updateSecurityStats();
         this.updateLiveGraph();
 
-        // Siapkan data untuk disimpan ke SQLite
         const payload = {
           waktu: new Date().toLocaleString(),
           daftarWifi: this.networks.map(wifi => ({
@@ -142,22 +149,16 @@ export class HomePage implements OnInit, AfterViewInit, OnDestroy {
             capabilities: wifi.capabilities || wifi.security || 'Open'
           }))
         };
-
-        // SIMPAN KE DATABASE HP (SQLite)
         await this.saveToLocalDB(payload);
-        
       } else {
         this.errorMessage = 'Tidak ada jaringan ditemukan.';
       }
     } catch (error) {
-      console.error('SCAN ERROR:', error);
-      this.errorMessage = 'Gagal memindai. Cek GPS/Izin Lokasi!';
+      this.errorMessage = 'Gagal memindai. Cek GPS!';
     } finally {
       this.isScanning = false;
     }
   }
-
-  // --- LOGIKA IZIN & GRAFIK ---
 
   async checkPermissions() {
     try {
@@ -165,14 +166,12 @@ export class HomePage implements OnInit, AfterViewInit, OnDestroy {
       if (status.location !== 'granted') {
         const alert = await this.alertController.create({
           header: 'Izin Lokasi',
-          message: 'Izin lokasi wajib aktif untuk memindai WiFi.',
+          message: 'Izin lokasi wajib aktif.',
           buttons: ['OK']
         });
         await alert.present();
       }
-    } catch (e) {
-      console.error("Gagal meminta izin", e);
-    }
+    } catch (e) {}
   }
 
   createLineChart() {
@@ -224,7 +223,6 @@ export class HomePage implements OnInit, AfterViewInit, OnDestroy {
       if (freq >= 2412 && freq <= 2484) ch = (freq - 2407) / 5;
       if (ch >= 1 && ch <= 13) channelCounts[ch - 1]++;
     });
-
     if (this.barChart) {
       this.barChart.data.datasets[0].data = channelCounts;
       this.barChart.update();
@@ -266,11 +264,8 @@ export class HomePage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   getChannelFromFreq(freq: number): number {
-    if (freq >= 2412 && freq <= 2484) {
-      return (freq - 2407) / 5;
-    } else if (freq >= 5170 && freq <= 5825) {
-      return (freq - 5000) / 5;
-    }
+    if (freq >= 2412 && freq <= 2484) return (freq - 2407) / 5;
+    if (freq >= 5170 && freq <= 5825) return (freq - 5000) / 5;
     return 0;
   }
 }
