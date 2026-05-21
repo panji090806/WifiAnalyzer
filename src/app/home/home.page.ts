@@ -40,55 +40,84 @@ export class HomePage implements OnInit, AfterViewInit, OnDestroy {
 
   constructor(private alertController: AlertController) { }
 
-  // --- LOGIKA DATABASE LOKAL (SQLITE) ---
+// --- LOGIKA DATABASE LOKAL (SQLITE) ---
 
-  async initDatabase() {
+async initDatabase() {
+  // Pengecekan krusial: Pastikan objek plugin native tidak null/undefined saat diakses
+  if (!this.sqlite) {
+    this.isDbReady = false;
+    this.errorMessage = 'Plugin SQLite belum siap di perangkat.';
+    throw new Error('CapacitorSQLite instance is null or undefined.');
+  }
+
+  try {
+    console.log('Memeriksa konsistensi koneksi SQLite...');
+    
+    // Cek apakah ada koneksi yang menggantung di memori native Android
+    const cc = await this.sqlite.checkConnectionsConsistency();
+    const isConn = (await this.sqlite.isConnection('wifi_db', false)).result;
+    
+    if (cc.result && isConn) {
+      // Jika koneksi lama masih tersangkut, ambil kembali jalurnya
+      this.db = await this.sqlite.retrieveConnection('wifi_db', false);
+      console.log('Koneksi lama wifi_db berhasil diambil kembali.');
+    } else {
+      // Jika bersih, buat koneksi baru yang segar
+      this.db = await this.sqlite.createConnection('wifi_db', false, 'no-encryption', 1, false);
+      console.log('Koneksi baru wifi_db berhasil dibuat.');
+    }
+
+    // Buka akses ke file database
+    await this.db.open();
+    console.log('Database wifi_db berhasil dibuka.');
+    
+    // Skema tabel asli milikmu tetap dipertahankan agar tidak mengubah fungsi simpan data
+    const schema = `CREATE TABLE IF NOT EXISTS wifi_data (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ssid TEXT,
+      level TEXT,
+      capabilities TEXT,
+      waktu TEXT
+    );`;
+    await this.db.execute(schema);
+    console.log('Tabel wifi_data siap digunakan.');
+    
+    this.isDbReady = true;
+    this.errorMessage = 'Database Siap.';
+  } catch (e) {
+    console.error('SQLITE ERROR PADA ALUR INIT:', e);
+    this.isDbReady = false;
+    this.errorMessage = 'Gagal memuat Database Lokal.';
+    // Lempar error agar blok catch di ngOnInit() bisa mendeteksinya
+    throw e; 
+  }
+}
+
+async saveToLocalDB(payload: any) {
+  // Jika belum siap, paksa inisialisasi ulang
+  if (!this.isDbReady) {
     try {
-      // Perbaikan: Cek konsistensi agar tidak error "Connection already exists"
-      const cc = await this.sqlite.checkConnectionsConsistency();
-      const isConn = (await this.sqlite.isConnection('wifi_db', false)).result;
-      
-      if (cc.result && isConn) {
-        // Gunakan retrieveConnection (tanpa akhiran DB) untuk versi terbaru
-        this.db = await this.sqlite.retrieveConnection('wifi_db', false);
-      } else {
-        this.db = await this.sqlite.createConnection('wifi_db', false, 'no-encryption', 1, false);
-      }
-
-      await this.db.open();
-      
-      const schema = `CREATE TABLE IF NOT EXISTS wifi_data (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        ssid TEXT,
-        level TEXT,
-        capabilities TEXT,
-        waktu TEXT
-      );`;
-      await this.db.execute(schema);
-      
-      this.isDbReady = true;
-      this.errorMessage = 'Database Siap.';
-    } catch (e) {
-      console.error('SQLITE ERROR:', e);
-      this.isDbReady = false;
-      this.errorMessage = 'Gagal memuat Database Lokal.';
+      await this.initDatabase();
+    } catch (error) {
+      this.errorMessage = 'Gagal menyimpan: Database belum siap.';
+      return;
     }
   }
 
-  async saveToLocalDB(payload: any) {
-    if (!this.isDbReady) await this.initDatabase();
-    try {
-      if (this.isDbReady) {
-        for (const wifi of payload.daftarWifi) {
-          const query = `INSERT INTO wifi_data (ssid, level, capabilities, waktu) VALUES (?, ?, ?, ?)`;
-          await this.db.run(query, [wifi.ssid, wifi.level, wifi.capabilities, payload.waktu]);
-        }
-        this.errorMessage = "BERHASIL: " + payload.daftarWifi.length + " data tersimpan.";
+  try {
+    if (this.isDbReady) {
+      for (const wifi of payload.daftarWifi) {
+        const query = `INSERT INTO wifi_data (ssid, level, capabilities, waktu) VALUES (?, ?, ?, ?)`;
+        await this.db.run(query, [wifi.ssid, wifi.level, wifi.capabilities, payload.waktu]);
       }
-    } catch (e) {
-      this.errorMessage = 'Gagal menyimpan ke Database.';
+      this.errorMessage = "BERHASIL: " + payload.daftarWifi.length + " data tersimpan.";
+      console.log('Log Berhasil: Data scan WiFi tersimpan ke SQLite.');
     }
+  } catch (e) {
+    console.error('SQLITE SAVE ERROR:', e);
+    this.errorMessage = 'Gagal menyimpan ke Database.';
   }
+}
 
   // --- LOGIKA SIKLUS HIDUP ---
 
