@@ -4,7 +4,6 @@ import { Chart, registerables } from 'chart.js';
 import { Geolocation } from '@capacitor/geolocation';
 import { CapacitorWifi } from 'capacitor-wifi';
 import { WifiNetwork } from '../models/wifi.interface';
-import { SQLiteDBConnection } from '@capacitor-community/sqlite';
 import { DatabaseService } from '../services/database.service';
 import { Subscription } from 'rxjs'; 
 
@@ -33,8 +32,6 @@ export class HomePage implements OnInit, AfterViewInit, OnDestroy {
   
   private updateInterval: any;
   private dbSub!: Subscription; 
-  
-  private db!: SQLiteDBConnection;
   private isDbReady = false; 
 
   constructor(
@@ -42,59 +39,16 @@ export class HomePage implements OnInit, AfterViewInit, OnDestroy {
     private databaseService: DatabaseService
   ) { }
 
-  // --- LOGIKA DATABASE LOKAL (SQLITE) ---
-
-  async initDatabase() {
-    try {
-      // Cukup ambil instance database yang sudah siap dari Service
-      this.db = this.databaseService.getDatabase();
-      
-      this.isDbReady = true;
-      this.errorMessage = 'Database Siap.';
-      console.log('Koneksi database pusat berhasil dihubungkan ke halaman Home.');
-    } catch (e) {
-      console.error('SQLITE ERROR PADA ALUR INIT HOME PAGE:', e);
-      this.isDbReady = false;
-      this.errorMessage = 'Gagal memuat Database Lokal.';
-    }
-  }
-
-  async saveToLocalDB(payload: any) {
-    if (!this.isDbReady || !this.db) {
-      this.errorMessage = 'Gagal menyimpan: Database belum siap.';
-      return;
-    }
-
-    try {
-      // Sesuaikan parameter INSERT dengan struktur tabel wifi_data yang ada di DatabaseService
-      for (const wifi of payload.daftarWifi) {
-        const query = `INSERT INTO wifi_data (ssid, bssid, signal_strength, security, status) VALUES (?, ?, ?, ?, ?)`;
-        await this.db.run(query, [
-          wifi.ssid, 
-          wifi.bssid, 
-          parseInt(wifi.level), 
-          wifi.capabilities, 
-          'Scanned'
-        ]);
-      }
-      this.errorMessage = "BERHASIL: " + payload.daftarWifi.length + " data tersimpan.";
-      console.log('Log Berhasil: Data scan WiFi tersimpan ke SQLite.');
-    } catch (e) {
-      console.error('SQLITE SAVE ERROR:', e);
-      this.errorMessage = 'Gagal menyimpan ke Database.';
-    }
-  }
-
   // --- SIKLUS HIDUP APLIKASI ---
 
   async ngOnInit() {
-    // 1. Mengamati status kesiapan database secara real-time
-    this.dbSub = this.databaseService.isDbReady.subscribe(async (ready) => {
-      console.log('Status Kesiapan Database Utama:', ready);
+    // 1. Mengamati status kesiapan database dari pusat secara aman via BehaviorSubject
+    this.dbSub = this.databaseService.isDbReady.subscribe((ready) => {
+      console.log('Status Kesiapan Database Utama di Home:', ready);
+      this.isDbReady = ready;
       if (ready) {
-        await this.initDatabase();
+        this.errorMessage = 'Database Siap.';
       } else {
-        this.isDbReady = false;
         this.errorMessage = 'Menunggu database diinisialisasi...';
       }
     });
@@ -108,7 +62,7 @@ export class HomePage implements OnInit, AfterViewInit, OnDestroy {
       this.startScan();
     }, 1000);
 
-    // 4. Jalankan interval pembaruan grafik rutin
+    // 4. Jalankan interval pembaruan grafik rutin secara berkala
     this.updateInterval = setInterval(() => {
       if (!this.isScanning) {
         this.updateLiveGraph();
@@ -124,6 +78,33 @@ export class HomePage implements OnInit, AfterViewInit, OnDestroy {
   ngOnDestroy() {
     if (this.updateInterval) clearInterval(this.updateInterval);
     if (this.dbSub) this.dbSub.unsubscribe();
+  }
+
+  // --- PENYIMPANAN LOG DATABASE LOKAL VIA SERVICE ---
+
+  async saveToLocalDB(payload: any) {
+    if (!this.isDbReady) {
+      this.errorMessage = 'Gagal menyimpan: Database belum siap.';
+      return;
+    }
+
+    try {
+      // Loop untuk memanggil fungsi simpan terpusat di DatabaseService
+      for (const wifi of payload.daftarWifi) {
+        await this.databaseService.saveWifiData(
+          wifi.ssid,
+          wifi.bssid,
+          wifi.level,
+          wifi.capabilities,
+          'Scanned'
+        );
+      }
+      this.errorMessage = `BERHASIL: ${payload.daftarWifi.length} data scan tersimpan.`;
+      console.log('Log Berhasil: Seluruh data scan WiFi tersimpan ke SQLite via Service.');
+    } catch (e) {
+      console.error('SQLITE SAVE ERROR PADA HOME PAGE:', e);
+      this.errorMessage = 'Gagal menyimpan ke Database.';
+    }
   }
 
   // --- LOGIKA SCAN WIFI & GRAFIK ---
@@ -146,23 +127,32 @@ export class HomePage implements OnInit, AfterViewInit, OnDestroy {
         this.updateSecurityStats();
         this.updateLiveGraph();
 
-        // Menyusun payload data yang sesuai dengan struktur kolom database terpusat
+        // Menyusun format payload data dengan konversi tipe data yang aman
         const payload = {
           waktu: new Date().toLocaleString(),
-          daftarWifi: this.networks.map(wifi => ({
-            ssid: wifi.SSID || wifi.ssid || 'Hidden Network',
-            bssid: wifi.BSSID || wifi.bssid || '00:00:00:00:00:00',
-            level: wifi.level ? wifi.level.toString() : '0',
-            capabilities: wifi.capabilities || wifi.security || 'Open'
-          }))
+          daftarWifi: this.networks.map(wifi => {
+            // Ambil level sinyal secara aman, pastikan menghasilkan tipe data number
+            let signalLevel = 0;
+            if (wifi.level !== undefined && wifi.level !== null) {
+              signalLevel = typeof wifi.level === 'string' ? parseInt(wifi.level, 10) : wifi.level;
+            }
+
+            return {
+              ssid: wifi.SSID || wifi.ssid || 'Hidden Network',
+              bssid: wifi.BSSID || wifi.bssid || '00:00:00:00:00:00',
+              level: isNaN(signalLevel) ? 0 : signalLevel,
+              capabilities: wifi.capabilities || wifi.security || 'Open'
+            };
+          })
         };
         
+        // Picu penyimpanan data ke SQLite lokal
         await this.saveToLocalDB(payload);
       } else {
         this.errorMessage = 'Tidak ada jaringan ditemukan.';
       }
     } catch (error) {
-      this.errorMessage = 'Gagal memindai. Cek GPS!';
+      this.errorMessage = 'Gagal memindai. Cek GPS & Izin Aplikasi!';
       console.error(error);
     } finally {
       this.isScanning = false;
@@ -174,13 +164,15 @@ export class HomePage implements OnInit, AfterViewInit, OnDestroy {
       const status = await Geolocation.requestPermissions();
       if (status.location !== 'granted') {
         const alert = await this.alertController.create({
-          header: 'Izin Lokasi',
-          message: 'Izin lokasi wajib aktif.',
+          header: 'Izin Lokasi Required',
+          message: 'Aplikasi memerlukan izin lokasi aktif untuk memindai sinyal sekitar WiFi.',
           buttons: ['OK']
         });
         await alert.present();
       }
-    } catch (e) {}
+    } catch (e) {
+      console.error('Gagal meminta izin lokasi:', e);
+    }
   }
 
   createLineChart() {
