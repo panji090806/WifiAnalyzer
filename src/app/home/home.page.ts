@@ -4,9 +4,8 @@ import { Chart, registerables } from 'chart.js';
 import { Geolocation } from '@capacitor/geolocation';
 import { CapacitorWifi } from 'capacitor-wifi';
 import { WifiNetwork } from '../models/wifi.interface';
-
-// Import SQLite untuk penyimpanan lokal di HP
-import { CapacitorSQLite, SQLiteConnection, SQLiteDBConnection } from '@capacitor-community/sqlite';
+import { SQLiteDBConnection } from '@capacitor-community/sqlite';
+import { DatabaseService } from '../services/database.service';
 
 Chart.register(...registerables);
 
@@ -33,134 +32,100 @@ export class HomePage implements OnInit, AfterViewInit, OnDestroy {
   
   private updateInterval: any;
   
-  // Variabel Database Lokal
-  private sqlite: SQLiteConnection = new SQLiteConnection(CapacitorSQLite);
+  // 3. UPDATE: Variabel database lama dihapus, diganti penampung instance terpusat
   private db!: SQLiteDBConnection;
   private isDbReady = false; 
 
-  constructor(private alertController: AlertController) { }
+  // 4. UPDATE: Suntikkan DatabaseService ke dalam constructor
+  constructor(
+    private alertController: AlertController,
+    private databaseService: DatabaseService
+  ) { }
 
-// --- LOGIKA DATABASE LOKAL (SQLITE) ---
+  // --- LOGIKA DATABASE LOKAL (SQLITE) DENGAN STRUKTUR BARU ---
 
-async initDatabase() {
-  // Pengecekan krusial: Pastikan objek plugin native tidak null/undefined saat diakses
-  if (!this.sqlite) {
-    this.isDbReady = false;
-    this.errorMessage = 'Plugin SQLite belum siap di perangkat.';
-    throw new Error('CapacitorSQLite instance is null or undefined.');
-  }
-
-  try {
-    console.log('Memeriksa konsistensi koneksi SQLite...');
-    
-    // Cek apakah ada koneksi yang menggantung di memori native Android
-    const cc = await this.sqlite.checkConnectionsConsistency();
-    const isConn = (await this.sqlite.isConnection('wifi_db', false)).result;
-    
-    if (cc.result && isConn) {
-      // Jika koneksi lama masih tersangkut, ambil kembali jalurnya
-      this.db = await this.sqlite.retrieveConnection('wifi_db', false);
-      console.log('Koneksi lama wifi_db berhasil diambil kembali.');
-    } else {
-      // Jika bersih, buat koneksi baru yang segar
-      this.db = await this.sqlite.createConnection('wifi_db', false, 'no-encryption', 1, false);
-      console.log('Koneksi baru wifi_db berhasil dibuat.');
-    }
-
-    // Buka akses ke file database
-    await this.db.open();
-    console.log('Database wifi_db berhasil dibuka.');
-    
-    // Skema tabel asli milikmu tetap dipertahankan agar tidak mengubah fungsi simpan data
-    const schema = `CREATE TABLE IF NOT EXISTS wifi_data (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      ssid TEXT,
-      level TEXT,
-      capabilities TEXT,
-      waktu TEXT
-    );`;
-    await this.db.execute(schema);
-    console.log('Tabel wifi_data siap digunakan.');
-    
-    this.isDbReady = true;
-    this.errorMessage = 'Database Siap.';
-  } catch (e) {
-    console.error('SQLITE ERROR PADA ALUR INIT:', e);
-    this.isDbReady = false;
-    this.errorMessage = 'Gagal memuat Database Lokal.';
-    // Lempar error agar blok catch di ngOnInit() bisa mendeteksinya
-    throw e; 
-  }
-}
-
-async saveToLocalDB(payload: any) {
-  // Jika belum siap, paksa inisialisasi ulang
-  if (!this.isDbReady) {
+  async initDatabase() {
     try {
-      await this.initDatabase();
-    } catch (error) {
+      console.log('Mengecek kesiapan DatabaseService terpusat...');
+      
+      // Jika service utama menyatakan database siap, ambil instance-nya
+      if (this.databaseService.isDbReady) {
+        this.db = this.databaseService.getDatabase();
+        
+        // Buat tabel dengan skema asli bawaan kamu jika belum ada
+        const schema = `CREATE TABLE IF NOT EXISTS wifi_data (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          ssid TEXT,
+          level TEXT,
+          capabilities TEXT,
+          waktu TEXT
+        );`;
+        await this.db.execute(schema);
+        
+        this.isDbReady = true;
+        this.errorMessage = 'Database Siap.';
+        console.log('Koneksi wifi_db berhasil dihubungkan ke halaman Home.');
+      } else {
+        // Jika belum siap (sedang proses inisialisasi di app.component.ts), coba lagi secara berkala
+        setTimeout(() => this.initDatabase(), 500);
+      }
+    } catch (e) {
+      console.error('SQLITE ERROR PADA ALUR INIT HOME PAGE:', e);
+      this.isDbReady = false;
+      this.errorMessage = 'Gagal memuat Database Lokal.';
+    }
+  }
+
+  async saveToLocalDB(payload: any) {
+    if (!this.isDbReady || !this.db) {
       this.errorMessage = 'Gagal menyimpan: Database belum siap.';
       return;
     }
-  }
 
-  try {
-    if (this.isDbReady) {
+    try {
       for (const wifi of payload.daftarWifi) {
         const query = `INSERT INTO wifi_data (ssid, level, capabilities, waktu) VALUES (?, ?, ?, ?)`;
         await this.db.run(query, [wifi.ssid, wifi.level, wifi.capabilities, payload.waktu]);
       }
       this.errorMessage = "BERHASIL: " + payload.daftarWifi.length + " data tersimpan.";
-      console.log('Log Berhasil: Data scan WiFi tersimpan ke SQLite.');
+      console.log('Log Berhasil: Data scan WiFi tersimpan ke SQLite via Service.');
+    } catch (e) {
+      console.error('SQLITE SAVE ERROR:', e);
+      this.errorMessage = 'Gagal menyimpan ke Database.';
     }
-  } catch (e) {
-    console.error('SQLITE SAVE ERROR:', e);
-    this.errorMessage = 'Gagal menyimpan ke Database.';
   }
-}
 
   // --- LOGIKA SIKLUS HIDUP ---
 
-async ngOnInit() {
-  try {
-    // 1. Tunggu database selesai diinisialisasi sampai tuntas
+  async ngOnInit() {
+    // 1. Hubungkan koneksi ke database service saat halaman dimuat
     await this.initDatabase();
-    this.isDbReady = true;
-    console.log('Database SQLite berhasil diaktifkan.');
-    
-    //mengambil data lama dari database saat pertama buka
 
-  } catch (error) {
-    console.error('Database gagal dimuat di awal:', error);
-    this.isDbReady = false;
+    // 2. Jalankan pengecekan izin lokasi/wifi
+    this.checkPermissions();
+    this.networks = [];
+    
+    // 3. Jalankan interval update UI secara berkala
+    this.updateInterval = setInterval(() => {
+      if (!this.isScanning) {
+        this.updateChannelData();
+        this.updateSecurityStats(); 
+      }
+      this.updateLiveGraph();
+    }, 3000);
   }
 
-  // 2. Jalankan pengecekan izin lokasi/wifi setelah database siap
-  this.checkPermissions();
-  this.networks = [];
-  
-  // 3. Jalankan interval update UI secara berkala
-  this.updateInterval = setInterval(() => {
-    if (!this.isScanning) {
-      this.updateChannelData();
-      this.updateSecurityStats(); 
-    }
-    this.updateLiveGraph();
-  }, 3000);
-}
+  ngAfterViewInit() {
+    this.createLineChart();
+    this.createBarChart();
+  }
 
-ngAfterViewInit() {
-  this.createLineChart();
-  this.createBarChart();
-}
+  ngOnDestroy() {
+    if (this.updateInterval) clearInterval(this.updateInterval);
+    // 5. UPDATE: Penutupan koneksi manual dihapus karena penutupan global dikelola penuh oleh Service
+  }
 
-ngOnDestroy() {
-  if (this.updateInterval) clearInterval(this.updateInterval);
-  // Tutup koneksi agar tidak leak
-  this.sqlite.closeConnection('wifi_db', false);
-}
-
-  // --- LOGIKA SCAN WIFI & GRAFIK (Tetap Sama dengan Kode Kamu) ---
+  // --- LOGIKA SCAN WIFI & GRAFIK (Tetap Sama dengan Kode Asli Kamu) ---
 
   async startScan() {
     if (this.isScanning) return; 

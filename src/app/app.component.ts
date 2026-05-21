@@ -1,6 +1,7 @@
 import { Component } from '@angular/core';
 import { App } from '@capacitor/app'; // Pastikan plugin ini terinstall
 import { AlertController, Platform } from '@ionic/angular';
+import { DatabaseService } from './services/database.service';
 
 @Component({
   selector: 'app-root',
@@ -11,13 +12,21 @@ import { AlertController, Platform } from '@ionic/angular';
 export class AppComponent {
   constructor(
     private platform: Platform,
-    private alertController: AlertController
+    private alertController: AlertController,
+    private databaseService: DatabaseService
   ) {
     this.initializeApp();
   }
 
   initializeApp() {
-    this.platform.ready().then(() => {
+    this.platform.ready().then(async() => {
+      try {
+        await this.databaseService.initializePlugin();
+        console.log('Database SQLite berhasil disiapkan di awal aplikasi.');
+      } catch (error) {
+        console.error('Gagal menyiapkan database di awal aplikasi:', error);
+      }
+      
       // Menangani tombol back fisik di Android
       App.addListener('backButton', async () => {
         const alert = await this.alertController.create({
