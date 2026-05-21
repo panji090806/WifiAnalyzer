@@ -15,6 +15,6 @@ public class MainActivity extends BridgeActivity {
 
     // 2. DAFTARKAN KEDUA PLUGIN DI SINI
     registerPlugin(Wifi.class);
-    registerPlugin(CapacitorSQLitePlugin.class); 
+    registerPlugin(CapacitorSQLitePlugin.class);
   }
 }

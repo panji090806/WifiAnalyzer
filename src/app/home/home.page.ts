@@ -6,6 +6,7 @@ import { CapacitorWifi } from 'capacitor-wifi';
 import { WifiNetwork } from '../models/wifi.interface';
 import { SQLiteDBConnection } from '@capacitor-community/sqlite';
 import { DatabaseService } from '../services/database.service';
+import { Subscription } from 'rxjs'; 
 
 Chart.register(...registerables);
 
@@ -31,44 +32,26 @@ export class HomePage implements OnInit, AfterViewInit, OnDestroy {
   public errorMessage: string = ''; 
   
   private updateInterval: any;
+  private dbSub!: Subscription; 
   
-  // 3. UPDATE: Variabel database lama dihapus, diganti penampung instance terpusat
   private db!: SQLiteDBConnection;
   private isDbReady = false; 
 
-  // 4. UPDATE: Suntikkan DatabaseService ke dalam constructor
   constructor(
     private alertController: AlertController,
     private databaseService: DatabaseService
   ) { }
 
-  // --- LOGIKA DATABASE LOKAL (SQLITE) DENGAN STRUKTUR BARU ---
+  // --- LOGIKA DATABASE LOKAL (SQLITE) ---
 
   async initDatabase() {
     try {
-      console.log('Mengecek kesiapan DatabaseService terpusat...');
+      // Cukup ambil instance database yang sudah siap dari Service
+      this.db = this.databaseService.getDatabase();
       
-      // Jika service utama menyatakan database siap, ambil instance-nya
-      if (this.databaseService.isDbReady) {
-        this.db = this.databaseService.getDatabase();
-        
-        // Buat tabel dengan skema asli bawaan kamu jika belum ada
-        const schema = `CREATE TABLE IF NOT EXISTS wifi_data (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          ssid TEXT,
-          level TEXT,
-          capabilities TEXT,
-          waktu TEXT
-        );`;
-        await this.db.execute(schema);
-        
-        this.isDbReady = true;
-        this.errorMessage = 'Database Siap.';
-        console.log('Koneksi wifi_db berhasil dihubungkan ke halaman Home.');
-      } else {
-        // Jika belum siap (sedang proses inisialisasi di app.component.ts), coba lagi secara berkala
-        setTimeout(() => this.initDatabase(), 500);
-      }
+      this.isDbReady = true;
+      this.errorMessage = 'Database Siap.';
+      console.log('Koneksi database pusat berhasil dihubungkan ke halaman Home.');
     } catch (e) {
       console.error('SQLITE ERROR PADA ALUR INIT HOME PAGE:', e);
       this.isDbReady = false;
@@ -83,35 +66,53 @@ export class HomePage implements OnInit, AfterViewInit, OnDestroy {
     }
 
     try {
+      // Sesuaikan parameter INSERT dengan struktur tabel wifi_data yang ada di DatabaseService
       for (const wifi of payload.daftarWifi) {
-        const query = `INSERT INTO wifi_data (ssid, level, capabilities, waktu) VALUES (?, ?, ?, ?)`;
-        await this.db.run(query, [wifi.ssid, wifi.level, wifi.capabilities, payload.waktu]);
+        const query = `INSERT INTO wifi_data (ssid, bssid, signal_strength, security, status) VALUES (?, ?, ?, ?, ?)`;
+        await this.db.run(query, [
+          wifi.ssid, 
+          wifi.bssid, 
+          parseInt(wifi.level), 
+          wifi.capabilities, 
+          'Scanned'
+        ]);
       }
       this.errorMessage = "BERHASIL: " + payload.daftarWifi.length + " data tersimpan.";
-      console.log('Log Berhasil: Data scan WiFi tersimpan ke SQLite via Service.');
+      console.log('Log Berhasil: Data scan WiFi tersimpan ke SQLite.');
     } catch (e) {
       console.error('SQLITE SAVE ERROR:', e);
       this.errorMessage = 'Gagal menyimpan ke Database.';
     }
   }
 
-  // --- LOGIKA SIKLUS HIDUP ---
+  // --- SIKLUS HIDUP APLIKASI ---
 
   async ngOnInit() {
-    // 1. Hubungkan koneksi ke database service saat halaman dimuat
-    await this.initDatabase();
+    // 1. Mengamati status kesiapan database secara real-time
+    this.dbSub = this.databaseService.isDbReady.subscribe(async (ready) => {
+      console.log('Status Kesiapan Database Utama:', ready);
+      if (ready) {
+        await this.initDatabase();
+      } else {
+        this.isDbReady = false;
+        this.errorMessage = 'Menunggu database diinisialisasi...';
+      }
+    });
 
     // 2. Jalankan pengecekan izin lokasi/wifi
-    this.checkPermissions();
+    await this.checkPermissions();
     this.networks = [];
     
-    // 3. Jalankan interval update UI secara berkala
+    // 3. Jalankan pemindaian otomatis pertama kali setelah komponen siap
+    setTimeout(() => {
+      this.startScan();
+    }, 1000);
+
+    // 4. Jalankan interval pembaruan grafik rutin
     this.updateInterval = setInterval(() => {
       if (!this.isScanning) {
-        this.updateChannelData();
-        this.updateSecurityStats(); 
+        this.updateLiveGraph();
       }
-      this.updateLiveGraph();
     }, 3000);
   }
 
@@ -122,10 +123,10 @@ export class HomePage implements OnInit, AfterViewInit, OnDestroy {
 
   ngOnDestroy() {
     if (this.updateInterval) clearInterval(this.updateInterval);
-    // 5. UPDATE: Penutupan koneksi manual dihapus karena penutupan global dikelola penuh oleh Service
+    if (this.dbSub) this.dbSub.unsubscribe();
   }
 
-  // --- LOGIKA SCAN WIFI & GRAFIK (Tetap Sama dengan Kode Asli Kamu) ---
+  // --- LOGIKA SCAN WIFI & GRAFIK ---
 
   async startScan() {
     if (this.isScanning) return; 
@@ -145,20 +146,24 @@ export class HomePage implements OnInit, AfterViewInit, OnDestroy {
         this.updateSecurityStats();
         this.updateLiveGraph();
 
+        // Menyusun payload data yang sesuai dengan struktur kolom database terpusat
         const payload = {
           waktu: new Date().toLocaleString(),
           daftarWifi: this.networks.map(wifi => ({
             ssid: wifi.SSID || wifi.ssid || 'Hidden Network',
+            bssid: wifi.BSSID || wifi.bssid || '00:00:00:00:00:00',
             level: wifi.level ? wifi.level.toString() : '0',
             capabilities: wifi.capabilities || wifi.security || 'Open'
           }))
         };
+        
         await this.saveToLocalDB(payload);
       } else {
         this.errorMessage = 'Tidak ada jaringan ditemukan.';
       }
     } catch (error) {
       this.errorMessage = 'Gagal memindai. Cek GPS!';
+      console.error(error);
     } finally {
       this.isScanning = false;
     }
