@@ -3,6 +3,7 @@ package com.ji.wifianalyzer;
 import android.os.Bundle;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.community.database.sqlite.CapacitorSQLitePlugin;
+
 // Import yang benar sesuai dengan isi file Wifi.java di VS Code kamu
 import com.digaus.capwifi.Wifi;
 import android.app.AlertDialog;
